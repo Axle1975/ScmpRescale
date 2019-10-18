@@ -2,11 +2,7 @@
 #include <fstream>
 #include <sstream>
 
-
-#include "scmp/scmp.h"
 #include "scmp_rescale_window.h"
-
-using namespace nfa::scmp;
 
 int main(int argc, char **argv)
 {
