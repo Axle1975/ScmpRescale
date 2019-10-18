@@ -1,0 +1,294 @@
+SCMAP format {
+  Header header;
+  Part1 part1;
+  Part2 part2;
+}
+
+
+Header {
+  uint32 magic_number;  // "Map" 0x1a
+  uint32 version;       // 0x0002 in the wild
+}
+
+Part1 { // preview
+  uint32 magic_number;  // 0xBEEFFEED
+  uint32 version;       // >0, but always 2 in the wild
+  float width;  // saved to Scmap this+2
+  float height; // saved to Scmap this+3
+  uint16 unknown1[]; // terminated by 0x0000, in the wild, always NULL
+  uint32 mystery_counter;
+  struct {
+    uint32 ignored;
+    uint32 something; // maybe cause a "_mappreview.dds" file to be dumped?
+  } [mystery_counter];
+  if (version < 2)
+  {
+    uint8 mapPreview[remainder of file];
+  }
+  else if (version >= 2)
+  {
+    uint32 mapPreviewSize; // set to zero to get "/textures/engine/b_fails_to_load.dds" instead
+    uint8 mapPreview[mapPreviewSize]; // dds
+  }
+}
+
+Part2 {
+  uint32 version;   // <51 unsupported
+  uint32 width;
+  uint32 height;
+  float heightScale;
+  uint8 heightMap[(width+1)*(height+1)];
+  if (version>=54)  // hazard thinks this should be 56
+  {
+   char unknown[];  // always NULL
+  }
+  
+  char terrainShader[];         // i didn't see this in IDA?
+  char backgroundTexturePath[]; // i didn't see this in IDA?
+  char skyCubeMapTexturePath[]; // i didn't see this in IDA?
+  
+  if (version>=55)
+  {
+    uint32 profileCount;
+    struct {
+        char profile[];     // null terminated
+        char texturePath[]; // null terminated
+    } [profileCount];
+  }
+  else
+  {
+    char texturePath[];  // null terminated, profile="<default>"
+  }
+  
+  // 26*uint32 + 1*uint8
+  float lightingMultiplier;
+  float sunDirection[3]
+  float sunAmbience[3];
+  float sunColour[3];
+  float shadowFillColour[3];
+  float specularColour[4];
+  float bloom;
+  float fogColour[3];
+  float fogStart;
+  float fogEnd;
+  
+  uint8 hasWater;
+  float elevation;
+  float elevationDeep;
+  float elevationAbyss;
+  WaterShaderProperties waterShaderProperties;
+  
+  uint32 waveGeneratorCount;
+  WaveGenerator waveGenerators[waveGeneratorCount];
+  
+  if (version >= 56)
+  {
+    uint32 minimapContourInterval;  // default 20
+    uint32 minimapDeepWaterColor;   // default 0xff0e3eff
+    uint32 minimapContourColor;     // default 0xff215cff
+    uint32 minimapShoreColor;       // default 0xff4785ff
+    uint32 minimapLandStartColor;   // default 0xff4c9d32
+    uint32 minimapLandEndColor;     // default 0xffffffff
+  }
+  
+  if (version >= 57)
+  {
+    uint32 v6_field_334_24;         // no default?
+  }
+  
+  Layers layers;
+
+  uint32 unknown1;
+  uint32 unknown2;
+  uint32 decalCount;
+  Decal decals[decalCount];
+
+  uint32 decalGroupCount;
+  DecalGroup decalGroups[decalGroupCount];
+  
+  uint32 widthAgain;
+  uint32 heightAgain;
+  uint32 count;          // always 1
+  { // normal map data
+    uint32 size;
+    char ignored[size];
+  } [count];
+  
+  if (version < 54)      // hazard thinks <56
+  {
+    uint32 count;       // always 1
+    {
+      uint32 size;
+      char buffer[size];
+    } [count];
+  }
+  else
+  {
+    {
+      uint32 size;
+      char textureMapData[size];
+    } [2];  // utilitya_mask.dds and utilityb_mask.dds
+  }
+  
+  uint32 count;     // always 1
+  {
+     uint32 size;
+     char waterMapData[size];
+  } [count];  // utilityc%d_mask.dds
+  
+  uint8 waterFoamMask[width*height/4];
+  uint8 waterFlatnessMask[width*height/4];
+  uint8 waterDepthMask[width*height/4];
+  uint8 terrainTypeData[width*height];
+  
+  if (version<53)
+  {
+    char unknown[]; // always null string, something to do with horizon texture?
+    char unknown[]; // always null string, ignored
+  }
+  
+  if (version>=59)
+  {
+    // V59ObjectA
+    V59ObjectA v59ObjectA;
+    uint32 count;
+    V59ObjectB objects[counts];
+  }
+}
+
+V59ObjectA
+{
+    float [3];     // read into LoadV59ObjectsA, Object* ((v2=a1)+32) { halfWidth, 0.0, halfHeight }
+    float;         // read into LoadV59ObjectsA, Object* ((v2=a1)+44) { eg -2.5, -100. }
+    float;         // read into LoadV59ObjectsA, Object* ((v2=a1)+48) { eg 2343.16284 }
+    float;         // read into LoadV59ObjectsA, Object* ((v2=a1)+52) { eg 1.25663698 }
+    uint32;         // read into LoadV59ObjectsA, Object* ((v2=a1)+56) {eg 16}
+    uint32;         // read into LoadV59ObjectsA, Object* ((v2=a1)+60) {eg 6}
+    float;         // read into LoadV59ObjectsA, Object* ((v2=a1)+64) {eg 165.008347, 312.006897}
+    float [3];     // read into LoadV59ObjectsA, Object* ((v2=a1)+68) { eg {0.648593724, 0.820468724, 0.839999974} or {0.899999976, 0.949999988, 0.969999969} }
+    float [3];     // read into LoadV59ObjectsA, Object* ((v2=a1)+80)  { eg {0.180000007, 0.430000007, 0.550000012} or {0.000000000, 0.250000000, 0.500000000} }
+    float;         // read into LoadV59ObjectsA, Object* ((v2=a1)+120) { eg ... ?}
+    char [];        // read into LoadV59ObjectsA, Object* ((v2=a1)+124) { eg "/textures/environment/Decal_test_Albedo003.dds" or NULL }
+    char [];        // read into LoadV59ObjectsA, Object* ((v2=a1)+152) { eg "/textures/environment/Decal_test_Glow003.dds" or NULL }
+    uint32 count;   // eg 9 or 0
+    uint8 bytes[40][count]; // each bytes[40] inserted into list at v2+180
+    char [];        // read into v2+192 using "copystring"
+    char [];        // read into v2+220 using "copystring"
+    char [];        // read into v2+248 using "copystring"
+    uint32;         // read into v2+276
+    uint32[3];      // read into v2+280
+    char [];        // read into v2+292
+    uint32;         // ignored
+    uint8 bytes[20][4]; // each bytes[20] copied into v2+320,v2+340,v2+360,v2+380 respectively
+}
+
+V59ObjectB
+{
+    if (part2.version>=60)
+    {
+        char name[];    // default: "Decal"
+    }
+    char [];
+    uint32 count;
+    {
+        uint32 [2];
+        uint32;
+        uint32 [2];
+        uint32 [2];
+        uint32 [2];
+    } [count];
+}
+
+Layers
+{
+    if (Part2.version < 54) // hazard thinks this should be 56
+    {
+        char noTileset[];   // always "No Tileset
+        uint32 count;       // ignored, always 6
+        {
+            char albedoTexture[];
+            char normalTexture[];
+            float albedoScale;
+            float normalScale;
+        } layers[6];              // layers [0..5) and 9
+    }
+    else
+    {
+        { char texture[], float scale; } albedos[10];
+        { char texture[], float scale; } normals[9];
+    }
+}
+
+Decal
+{
+    uint32 unknown;
+    uint32 type;
+    uint32 textureCount;
+    {
+      uint32 strlen;
+      char texturePath[strlen]; // no null termination
+    } [textureCount];
+    float scale[3];
+    float position[3];
+    float rotation[3];
+    float cutoffLod;
+    float nearCutoffLod;
+    uint32 ownerArmy;
+}
+
+DecalGroup
+{
+    uint32 id;
+    char name[];
+    uint32 dataCount;
+    uint32 data[dataCount];
+}
+
+WaterShaderProperties
+{
+    float surfaceColor[3];
+    float colorLerp[2];
+    float refractionScale;
+    float fresnelBias;
+    float fresnelPower;
+    float unitReflection;
+    float skyReflection;
+    float sunShininess;
+    float sunStrength;
+    float sunDirection[3];
+    float sunColor[3];
+    float sunReflection;
+    float sunGlow;
+    char cubemapTexturePath[];
+    char waterRampTexturePath[];
+    float normalRepeats[4];
+    WaveTexture waveTextures[4];
+}
+
+WaveTexture
+{
+    float normalMovement[2];
+    char path[];
+}
+
+WaveGenerator
+{
+    char textureName[];
+    char rampName[];
+    float position[3];
+    float rotation;
+    float velocity[3];
+    float lifetimeFirst;
+    float lifetimeSecond;
+    float periodFirst;
+    float periodSecond;
+    float scaleFirst;
+    float ScaleSecond;
+    if (part2.version>=51)
+    {
+        float frameCount;       // default 1.0 
+        float frameRateFirst;   // default 1.0
+        float frameRateSecond;  // default 0.0
+        float stripCount;       // default 1.0
+    }
+};
