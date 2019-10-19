@@ -216,7 +216,8 @@ namespace nfa {
             void DumpTexture(const std::string &filename, const std::vector<std::uint8_t> &data) const;
             void MapInfo(std::ostream &);
             void Resize(int width, int height);
-            void Import(const Scmp &other, int column0, int row0);
+            void Import(const Scmp &other, int column0, int row0, bool additiveTerrain);
+            std::int16_t HeightMapAt(int x, int z);
 
             std::uint32_t magicMap1A;
             std::uint32_t magicBeeffeed;

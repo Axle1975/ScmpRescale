@@ -26,14 +26,15 @@ public:
     int getHorzPosition();
     int getVertPosition();
     bool isMergeModeSelected();
+    bool isAdditiveMerge();
 
     private slots:
     void on_sourceMapButton_clicked();
     void on_targetMapButton_clicked();
     void on_sourceMapLineEdit_textChanged(const QString &);
     void on_targetMapLineEdit_textChanged(const QString &);
-    void on_sourceNewWidthSpinBox_valueChanged(int);
-    void on_sourceNewHeightSpinBox_valueChanged(int);
+    void on_sourceNewWidthComboBox_currentIndexChanged(int);
+    void on_sourceNewHeightComboBox_currentIndexChanged(int);
     void on_mergeModeRadioButton_toggled(bool);
     void on_sourceHorizontalPositionSpinBox_valueChanged(int);
     void on_sourceHorizontalLeftPositionSlider_valueChanged(int);

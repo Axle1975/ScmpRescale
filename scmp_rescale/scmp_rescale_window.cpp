@@ -13,23 +13,26 @@
 #include <sstream>
 
 
-unsigned UpperPowerOfTwo(unsigned v)
-{
-    v--;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    v++;
-    return v;
-}
-
-
 ScmpRescaleWindow::ScmpRescaleWindow(QWidget *parent):
     QMainWindow(parent)
 {
     ui.setupUi(this);
+
+    for (auto pair : {
+        std::make_pair("1.25 km (64px)",64),
+        std::make_pair("2.5 km (128px)", 128),
+        std::make_pair("5 km (256px)", 256),
+        std::make_pair("10 km (512px)", 512),
+        std::make_pair("20 km (1024px)", 1024),
+        std::make_pair("40 km (2048px)", 2048),
+        std::make_pair("80 km (4096px)", 4096)
+        })
+    {
+        ui.sourceNewWidthComboBox->addItem(pair.first, QVariant(pair.second));
+        ui.sourceNewHeightComboBox->addItem(pair.first, QVariant(pair.second));
+        ui.sourceNewWidthComboBox->setCurrentIndex(3);
+        ui.sourceNewHeightComboBox->setCurrentIndex(3);
+    }
 
     updateSourceMapInfo();
     updateTargetMapInfo();
@@ -73,19 +76,6 @@ void ScmpRescaleWindow::updateSaveOptions()
     {
         ui.goButton->setEnabled(m_sourceScmp && m_targetScmp);
         ui.mergePositionFrame->setHidden(false);
-
-        if (m_targetScmp)
-        {
-            if (getNewSourceWidth() > m_targetScmp->width)
-            {
-                ui.sourceNewWidthSpinBox->setValue(m_targetScmp->width);
-            }
-            if (getNewSourceHeight() > m_targetScmp->height)
-            {
-                ui.sourceNewHeightSpinBox->setValue(m_targetScmp->height);
-            }
-        }
-
     }
     else
     {
@@ -155,7 +145,7 @@ void ScmpRescaleWindow::on_goButton_clicked()
         if (isMergeModeSelected() && m_sourceScmp && m_targetScmp)
         {
             m_sourceScmp->Resize(getNewSourceWidth(), getNewSourceHeight());
-            m_targetScmp->Import(*m_sourceScmp, getHorzPosition(), getVertPosition());
+            m_targetScmp->Import(*m_sourceScmp, getHorzPosition(), getVertPosition(), isAdditiveMerge());
             std::ofstream ofs(getTargetFilename().toLatin1().data(), std::ios::binary);
             m_targetScmp->Save(ofs);
             QMessageBox::information(this,
@@ -166,7 +156,8 @@ void ScmpRescaleWindow::on_goButton_clicked()
         }
         else if (!isMergeModeSelected() && m_sourceScmp)
         {
-            m_sourceScmp->Resize(getNewSourceWidth(), getNewSourceHeight());
+            int newWidthHeight = std::max(getNewSourceWidth(), getNewSourceHeight());
+            m_sourceScmp->Resize(newWidthHeight, newWidthHeight);
             std::ofstream ofs(getTargetFilename().toLatin1().data(), std::ios::binary);
             m_sourceScmp->Save(ofs);
             QMessageBox::information(this, "Rescale", 
@@ -200,13 +191,13 @@ void ScmpRescaleWindow::on_exitButton_clicked()
 }
 
 
-void ScmpRescaleWindow::on_sourceNewWidthSpinBox_valueChanged(int)
+void ScmpRescaleWindow::on_sourceNewWidthComboBox_currentIndexChanged(int)
 {
     updatePositionSliders();
 }
 
 
-void ScmpRescaleWindow::on_sourceNewHeightSpinBox_valueChanged(int)
+void ScmpRescaleWindow::on_sourceNewHeightComboBox_currentIndexChanged(int)
 {
     updatePositionSliders();
 }
@@ -340,12 +331,12 @@ QString ScmpRescaleWindow::getTargetFilename()
 
 int ScmpRescaleWindow::getNewSourceWidth()
 {
-    return ui.sourceNewWidthSpinBox->value();
+    return ui.sourceNewWidthComboBox->currentData().toInt();
 }
 
 int ScmpRescaleWindow::getNewSourceHeight()
 {
-    return ui.sourceNewHeightSpinBox->value();
+    return ui.sourceNewHeightComboBox->currentData().toInt();
 }
 
 int ScmpRescaleWindow::getHorzPosition()
@@ -361,4 +352,9 @@ int ScmpRescaleWindow::getVertPosition()
 bool ScmpRescaleWindow::isMergeModeSelected()
 {
     return ui.mergeModeRadioButton->isChecked();
+}
+
+bool ScmpRescaleWindow::isAdditiveMerge()
+{
+    return ui.additiveMergeCheckBox->isChecked();
 }

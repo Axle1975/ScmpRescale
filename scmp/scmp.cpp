@@ -55,7 +55,7 @@ template<typename DataT>
 static void ImportImage(
     const DataT *im1, int W1, int H1,
     DataT *im2, int W2, int H2,
-    int W0, int H0, bool overwrite)
+    int W0, int H0, bool additive)
 {
     for (int col = 0u; col < W1; ++col)
     {
@@ -67,13 +67,13 @@ static void ImportImage(
             {
                 continue;
             }
-            if (overwrite)
+            if (additive)
             {
-                im2[W2*destRow + destCol] = im1[W1*row + col];
+                im2[W2*destRow + destCol] += im1[W1*row + col];
             }
             else
             {
-                im2[W2*destRow + destCol] += im1[W1*row + col];
+                im2[W2*destRow + destCol] = im1[W1*row + col];
             }
         }
     }
@@ -113,7 +113,7 @@ static void ImportDds(
         ImportImage<std::uint8_t>(
             (std::uint8_t*)srcScaled.data(), srcWScaled, srcHScaled,
             (std::uint8_t*)dstDds.getMutable(imageBytes), dstDds.width(), dstDds.height(),
-            column0, row0, true);
+            column0, row0, false);
         break;
 
     case 2:
@@ -122,7 +122,7 @@ static void ImportDds(
         ImportImage<std::uint16_t>(
             (std::uint16_t*)srcScaled.data(), srcWScaled, srcHScaled,
             (std::uint16_t*)dstDds.getMutable(imageBytes), dstDds.width(), dstDds.height(),
-            column0, row0, true);
+            column0, row0, false);
         break;
 
     case 4:
@@ -131,7 +131,7 @@ static void ImportDds(
         ImportImage<std::uint32_t>(
             (std::uint32_t*)srcScaled.data(), srcWScaled, srcHScaled,
             (std::uint32_t*)dstDds.getMutable(imageBytes), dstDds.width(), dstDds.height(),
-            column0, row0, true);
+            column0, row0, false);
         break;
 
     case 8:
@@ -140,7 +140,7 @@ static void ImportDds(
         ImportImage<std::uint64_t>(
             (std::uint64_t*)srcScaled.data(), srcWScaled, srcHScaled,
             (std::uint64_t*)dstDds.getMutable(imageBytes), dstDds.width(), dstDds.height(),
-            column0, row0, true);
+            column0, row0, false);
         break;
 
     default:
@@ -159,22 +159,21 @@ static void GainImage(std::vector<DataT> &im, float gain)
 }
 
 
-static bool isInBounds(float *pos, float xlow, float zlow, float xhigh, float zhigh)
-{
-    return (pos[0] >= xlow && pos[0] < xhigh && pos[2] >= zlow && pos[2] < zhigh);
-}
-
-
 template<typename T>
 static std::vector< std::shared_ptr<T> > ImportItemsInRectangle(
     const std::vector<std::shared_ptr<T> > &items,
     const std::vector<std::shared_ptr<T> > &otherItems,
-    int xlow, int zlow, int xhigh, int zhigh)
+    int xlow, int zlow, int xhigh, int zhigh, nfa::scmp::Scmp *scmp)
 {
+    auto isInBounds = [xlow, zlow, xhigh, zhigh](float *pos)
+    {
+        return (pos[0] >= xlow && pos[0] < xhigh && pos[2] >= zlow && pos[2] < zhigh);
+    };
+
     std::vector<std::shared_ptr<T> > newItems;
     for (auto & itemPtr : items)
     {
-        if (!isInBounds(itemPtr->position, xlow, zlow, xhigh, zhigh))
+        if (!isInBounds(itemPtr->position))
         {
             newItems.push_back(itemPtr);
         }
@@ -184,8 +183,15 @@ static std::vector< std::shared_ptr<T> > ImportItemsInRectangle(
         std::shared_ptr<T> itemPtr(new T(*_itemPtr));
         itemPtr->position[0] += xlow;
         itemPtr->position[2] += zlow;
-        if (isInBounds(itemPtr->position, xlow, zlow, xhigh, zhigh))
+
+        if (isInBounds(itemPtr->position))
         {
+            if (scmp)
+            {
+                float newHeight = scmp->heightScale * scmp->HeightMapAt(itemPtr->position[0], itemPtr->position[2]);
+                itemPtr->position[1] = newHeight;
+            }
+
             newItems.push_back(itemPtr);
         }
     }
@@ -617,6 +623,18 @@ namespace nfa {
             }
         }
 
+        std::int16_t Scmp::HeightMapAt(int x, int z)
+        {
+            if (x >= 0 && x <= width && z >= 0 && z <= height)
+            {
+                return heightMapData[(1 + width)*z + x];
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
         Scmp::Scmp(std::istream &is)
         {
             // header
@@ -892,6 +910,26 @@ namespace nfa {
             }
 
             VerifyStatus(is, true);
+        }
+
+        template<typename DataT>
+        static void SaveBufferTxt(const DataT *data, int width, int height, const char *filename, bool columnMajor)
+        {
+            std::ofstream fs(filename, std::ios::out);
+            for (int col = 0; col < width; ++col)
+            {
+                for (int row = 0; row < height; ++row)
+                {
+                    if (columnMajor)
+                    {
+                        fs << col << ',' << row << data[col*width + height];
+                    }
+                    else
+                    {
+                        fs << col << ',' << row << data[row*height + col];
+                    }
+                }
+            }
         }
 
         void Scmp::Save(std::ostream &os)
@@ -1179,19 +1217,19 @@ namespace nfa {
         }
 
 
-        void Scmp::Import(const Scmp &other, int column0, int row0)
+        void Scmp::Import(const Scmp &other, int column0, int row0, bool additiveTerrain)
         {
             // previewImageData.  not important, user can update it with any map editor
 
             ImportImage(
                 other.heightMapData.data(), 1 + other.width, 1 + other.height,
                 this->heightMapData.data(), 1 + this->width, 1 + this->height,
-                column0, row0, true);
+                column0, row0, additiveTerrain);
 
             ImportImage(
                 other.terrainTypeData.data(), other.width, other.height,
                 this->terrainTypeData.data(), this->width, this->height,
-                column0, row0, true);
+                column0, row0, false);
 
             for (std::size_t n = 0u; n < normalMapData.size() && n < other.normalMapData.size(); ++n)
             {
@@ -1223,9 +1261,9 @@ namespace nfa {
             int columnEnd = column0 + other.width;
             int rowEnd = row0 + other.height;
 
-            waveGenerators = ImportItemsInRectangle(waveGenerators, other.waveGenerators, column0, row0, columnEnd, rowEnd);
-            decals = ImportItemsInRectangle(decals, other.decals, column0, row0, columnEnd, rowEnd);
-            props = ImportItemsInRectangle(props, other.props, column0, row0, columnEnd, rowEnd);
+            waveGenerators = ImportItemsInRectangle(waveGenerators, other.waveGenerators, column0, row0, columnEnd, rowEnd, this);
+            decals = ImportItemsInRectangle(decals, other.decals, column0, row0, columnEnd, rowEnd, this);
+            props = ImportItemsInRectangle(props, other.props, column0, row0, columnEnd, rowEnd, this);
         }
 
 
