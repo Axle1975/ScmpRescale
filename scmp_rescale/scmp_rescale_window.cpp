@@ -9,8 +9,148 @@
 
 #include <algorithm>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <regex>
 #include <sstream>
+
+
+void BackupFile(QString filename)
+{
+    if (!QFileInfo(filename).exists())
+    {
+        return;
+    }
+
+    auto MakeBackupFilename = [filename](int n)
+    {
+        QString result = filename + ".bak";
+        if (n > 0)
+        {
+            result += "(" + QString::number(n) + ")";
+        }
+        return result;
+    };
+
+    QString backupFilename = MakeBackupFilename(0);
+    for (int n = 0; QFileInfo(backupFilename).exists(); backupFilename = MakeBackupFilename(++n));
+    QFile::copy(filename, backupFilename);
+}
+
+
+std::map<QString, QString>  GetMapLuaFileNames(const QString &scmapFilename)
+{
+    std::map<QString, QString> filenames;
+
+    QFileInfo file_info(scmapFilename);
+    QString baseFilename = QDir(file_info.absolutePath()).filePath(file_info.baseName());
+
+    filenames["scmap"] = scmapFilename;
+    filenames["save"] = baseFilename + "_save.lua";
+    filenames["scenario"] = baseFilename + "_scenario.lua";
+    filenames["script"] = baseFilename + "_script.lua";
+
+    for (auto it = filenames.begin(); it != filenames.end(); ++it)
+    {
+        std::cout << it->first.toStdString() << ": " << it->second.toStdString() << std::endl;
+    }
+
+    return filenames;
+}
+
+
+void ModifyLines(std::istream &is, std::ostream &os,
+    std::function< void(std::ostream &, std::string &, const std::vector<std::string> &) > f)
+{
+    std::string line;
+    std::regex r("([a-zA-Z]+|[+-]?([0-9]*[.])?[0-9]+)");
+
+    while (!is.eof())
+    {
+        std::getline(is, line);
+
+        std::vector<std::string> keywords;
+        for (auto it = std::sregex_iterator(line.begin(), line.end(), r); it != std::sregex_iterator(); ++it)
+        {
+            keywords.push_back(it->str());
+        }
+        f(os, line, keywords);
+    }
+}
+
+
+void RescaleMapSaveFile(
+    QString sourceFilename, QString targetFilename,
+    double xscale, double zscale, double xofs, double zofs, nfa::scmp::Scmp *scmp)
+{
+    if (!QFileInfo(sourceFilename).exists())
+    {
+        return;
+    }
+
+    std::ostringstream oss;
+    {
+        std::ifstream ifs(sourceFilename.toLatin1().data());
+
+        ModifyLines(ifs, oss, [xscale, zscale, xofs, zofs, scmp](std::ostream &s, std::string &line, const std::vector<std::string> &kws)
+        {
+            if (kws.size() == 6 && kws[0] == "position" && kws[1] == "VECTOR" && kws[2] == "3")
+            {
+                double x = std::atof(kws[3].c_str()) * xscale + xofs;
+                double z = std::atof(kws[5].c_str()) * zscale + zofs;
+                double y = scmp->heightScale * scmp->HeightMapAt(x, z);
+                s << "['position'] = VECTOR3( " << x << ", " << y << ", " << z << " ),\n";
+            }
+            else if (kws.size() == 6 && kws[0] == "rectangle" && kws[1] == "RECTANGLE")
+            {
+                double xmin = std::atof(kws[2].c_str()) * xscale + xofs;
+                double zmin = std::atof(kws[3].c_str()) * zscale + zofs;
+                double xmax = std::atof(kws[4].c_str()) * xscale + xofs;
+                double zmax = std::atof(kws[5].c_str()) * zscale + zofs;
+                s << "['rectangle'] = RECTANGLE( " << xmin << ", " << zmin << ", " << xmax << ", " << zmax << " ),\n";
+            }
+            else
+            {
+                s << line << '\n';
+            }
+        });
+    }
+
+    BackupFile(targetFilename);
+    std::ofstream ofs(targetFilename.toLatin1().data());
+    ofs << oss.str();
+}
+
+
+
+void UpdateMapScenarioFile(QString sourceFilename, QString targetFilename, nfa::scmp::Scmp *scmp)
+{
+    if (!QFileInfo(sourceFilename).exists())
+    {
+        return;
+    }
+
+    std::ostringstream oss;
+    {
+        std::ifstream ifs(sourceFilename.toLatin1().data());
+
+        ModifyLines(ifs, oss, [scmp](std::ostream &s, std::string &line, const std::vector<std::string> &kws)
+        {
+            if (kws.size() == 3 && kws[0] == "size")
+            {
+                s << "size = { " << scmp->width << ", " << scmp->height << " },\n";
+            }
+            else
+            {
+                s << line << '\n';
+            }
+        });
+    }
+
+    BackupFile(targetFilename);
+    std::ofstream ofs(targetFilename.toLatin1().data());
+    ofs << oss.str();
+}
 
 
 ScmpRescaleWindow::ScmpRescaleWindow(QWidget *parent):
@@ -75,13 +215,17 @@ void ScmpRescaleWindow::updateSaveOptions()
     if (isMergeModeSelected())
     {
         ui.goButton->setEnabled(m_sourceScmp && m_targetScmp);
-        ui.mergePositionFrame->setHidden(false);
     }
     else
     {
         ui.goButton->setEnabled(m_sourceScmp && !getTargetFilename().isEmpty());
-        ui.mergePositionFrame->setHidden(true);
     }
+
+    ui.mergePositionFrame->setHidden(!isMergeModeSelected());
+    ui.sourceNewWidthComboBox->setHidden(isMergeModeSelected());
+    ui.sourceNewHeightComboBox->setHidden(isMergeModeSelected());
+    ui.sourceNewWidthSpinBox->setHidden(!isMergeModeSelected());
+    ui.sourceNewHeightSpinBox->setHidden(!isMergeModeSelected());
 }
 
 
@@ -116,6 +260,10 @@ void ScmpRescaleWindow::updatePositionSliders()
 
 void ScmpRescaleWindow::on_goButton_clicked()
 {
+    // user might have been fiddling with files in between selecting them and pressing go
+    m_sourceScmp = tryLoadScmp(getSourceFilename());
+    m_targetScmp = tryLoadScmp(getTargetFilename());
+
     QFileInfo checkFile(getTargetFilename());
     if (checkFile.exists() && checkFile.isFile())
     {
@@ -125,50 +273,61 @@ void ScmpRescaleWindow::on_goButton_clicked()
             return;
         }
 
-        auto MakeBackupFilename = [this](int n)
-        { 
-            QString result = this->getTargetFilename() + ".bak";
-            if (n > 0)
-            {
-                result += "(" + QString::number(n) + ")";
-            }
-            return result;
-        };
-
-        QString backupFilename = MakeBackupFilename(0);
-        for (int n = 0; QFileInfo(backupFilename).exists(); backupFilename = MakeBackupFilename(++n));
-        QFile::copy(getTargetFilename(), backupFilename);
+        BackupFile(getTargetFilename());
     }
 
     try
     {
         if (isMergeModeSelected() && m_sourceScmp && m_targetScmp)
         {
+            double xscale = double(getNewSourceWidth()) / double(m_sourceScmp->width);
+            double zscale = double(getNewSourceHeight()) / double(m_sourceScmp->height);
+            double xofs = double(getHorzPosition());
+            double zofs = double(getVertPosition());
             m_sourceScmp->Resize(getNewSourceWidth(), getNewSourceHeight());
             m_targetScmp->Import(*m_sourceScmp, getHorzPosition(), getVertPosition(), isAdditiveMerge());
             std::ofstream ofs(getTargetFilename().toLatin1().data(), std::ios::binary);
             m_targetScmp->Save(ofs);
-            QMessageBox::information(this,
-                "Rescale/import", "Finished rescaling and importing .scmap.\n"
-                "This tool only edits the .scmap file.  Your next step is:\n"
-                "- use a map editor to place markers from the imported map\n"
-                "  (eg mexes and starting positions)", QMessageBox::Ok);
+
+            if (getSourceFilename() == getTargetFilename())
+            {
+                auto targetFilenames = GetMapLuaFileNames(getTargetFilename());
+                RescaleMapSaveFile(targetFilenames["save"], targetFilenames["save"], xscale, zscale, xofs, zofs, m_targetScmp.get());
+                QMessageBox::information(this,
+                    "Rescale/import", "Finished rescaling and importing .scmap and _save.lua", QMessageBox::Ok);
+            }
+            else
+            {
+                QMessageBox::information(this,
+                    "Rescale/import", "Finished rescaling and importing .scmap.\n"
+                    "This tool only edits the .scmap file.  Your next step is:\n"
+                    "- use a map editor to place markers from the imported map\n"
+                    "  (eg mexes and starting positions)", QMessageBox::Ok);
+            }
         }
         else if (!isMergeModeSelected() && m_sourceScmp)
         {
             int newWidthHeight = std::max(getNewSourceWidth(), getNewSourceHeight());
+            double xscale = double(newWidthHeight) / double(m_sourceScmp->width);
+            double zscale = double(newWidthHeight) / double(m_sourceScmp->height);
+
             m_sourceScmp->Resize(newWidthHeight, newWidthHeight);
             std::ofstream ofs(getTargetFilename().toLatin1().data(), std::ios::binary);
             m_sourceScmp->Save(ofs);
+
+            auto sourceFilenames = GetMapLuaFileNames(getSourceFilename());
+            auto targetFilenames = GetMapLuaFileNames(getTargetFilename());
+            RescaleMapSaveFile(sourceFilenames["save"], targetFilenames["save"], xscale, zscale, 0.0, 0.0, m_sourceScmp.get());
+            UpdateMapScenarioFile(sourceFilenames["scenario"], targetFilenames["scenario"], m_sourceScmp.get());
+            if (sourceFilenames["script"] != targetFilenames["script"] && QFileInfo(sourceFilenames["script"]).exists())
+            {
+                BackupFile(targetFilenames["script"]);
+                QFile::remove(targetFilenames["script"]);
+                QFile::copy(sourceFilenames["script"], targetFilenames["script"]);
+            }
+
             QMessageBox::information(this, "Rescale", 
-                "Finished rescaling .scmap.\n"
-                "This tool only edits the .scmap file.  Your next steps are:\n"
-                "- Edit the _scenario.lua file to set the new map width.\n"
-                "- Rename your new .scmap file (or edit the _scenario.lua\n"
-                "  file to point to your new .scmap file)\n"
-                "- Use a map editor (or edit the _save.lua file) to move\n"
-                "  your markers (eg mexes and starting positions)\n"
-                "  and adjust your map bounds / areas", QMessageBox::Ok);
+                "Finished rescaling .scmap, _save.lua and _scenario.lua files:\n", QMessageBox::Ok);
         }
 
     }
@@ -331,12 +490,26 @@ QString ScmpRescaleWindow::getTargetFilename()
 
 int ScmpRescaleWindow::getNewSourceWidth()
 {
-    return ui.sourceNewWidthComboBox->currentData().toInt();
+    if (!ui.sourceNewWidthSpinBox->isHidden())
+    {
+        return ui.sourceNewWidthSpinBox->value();
+    }
+    else
+    {
+        return ui.sourceNewWidthComboBox->currentData().toInt();
+    }
 }
 
 int ScmpRescaleWindow::getNewSourceHeight()
 {
-    return ui.sourceNewHeightComboBox->currentData().toInt();
+    if (!ui.sourceNewHeightSpinBox->isHidden())
+    {
+        return ui.sourceNewHeightSpinBox->value();
+    }
+    else
+    {
+        return ui.sourceNewHeightComboBox->currentData().toInt();
+    }
 }
 
 int ScmpRescaleWindow::getHorzPosition()
